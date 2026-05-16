@@ -1,0 +1,72 @@
+name: Daily Research Digest
+
+on:
+  schedule:
+    # GitHub cron uses UTC. 16:00 UTC is 9:00 AM in America/Phoenix.
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the digest instead of sending email"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  send-digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install agent
+        run: python -m pip install -e .
+
+      - name: Prepare personal topic config
+        shell: bash
+        env:
+          TOPIC_CONFIG_TOML: ${{ secrets.TOPIC_CONFIG_TOML }}
+        run: |
+          mkdir -p config/personal_topics
+
+          if [ -n "$TOPIC_CONFIG_TOML" ]; then
+            printf '%s' "$TOPIC_CONFIG_TOML" > config/personal_topics/github.toml
+            echo "TOPIC_CONFIG=config/personal_topics/github.toml" >> "$GITHUB_ENV"
+          elif [ -f config/personal_topics/default.toml ]; then
+            echo "TOPIC_CONFIG=config/personal_topics/default.toml" >> "$GITHUB_ENV"
+          else
+            echo "::error::Set the TOPIC_CONFIG_TOML repository secret or commit config/personal_topics/default.toml. The workflow will not fall back to config/topics/ai.toml."
+            exit 1
+          fi
+
+      - name: Run digest
+        shell: bash
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          GMAIL_USERNAME: ${{ secrets.GMAIL_USERNAME }}
+          GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
+          GMAIL_IMAP_HOST: ${{ secrets.GMAIL_IMAP_HOST }}
+          GMAIL_IMAP_PORT: ${{ secrets.GMAIL_IMAP_PORT }}
+        run: |
+          args=(python -m news_agent --config "$TOPIC_CONFIG")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            args+=(--dry-run)
+          fi
+          "${args[@]}"

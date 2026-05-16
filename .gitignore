@@ -1,0 +1,10 @@
+.env
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+src/*.egg-info/
+
+# Personal topic configs can contain recipient addresses and source choices.
+config/personal_topics/*.toml
+.test-personal-topics/

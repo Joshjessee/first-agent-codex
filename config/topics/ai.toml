@@ -1,0 +1,30 @@
+# Change this one value to reuse the agent for another topic.
+topic = "artificial intelligence"
+
+# These defaults can stay unchanged for a first version.
+article_count = 3
+lookback_hours = 30
+language = "en-US"
+region = "US"
+
+[email]
+subject_prefix = "Daily Research Digest"
+recipients = ["recipient@example.com"]
+
+[schedule]
+frequency = "daily"
+time = "10:00"
+
+[sources.google_news]
+enabled = true
+
+# Optional: read recent Gmail newsletters through IMAP and rank their article
+# links alongside Google News candidates. Uses GMAIL_USERNAME/GMAIL_PASSWORD
+# from .env, or falls back to SMTP_USERNAME/SMTP_PASSWORD.
+[sources.gmail]
+enabled = false
+mode = "senders" # senders, labels, or senders_and_labels
+senders = []
+labels = []
+max_messages = 25
+max_links_per_message = 6
