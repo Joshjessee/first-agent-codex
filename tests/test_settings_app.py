@@ -35,6 +35,7 @@ class SettingsAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"artificial intelligence", response.data)
         self.assertIn(b"recipient@example.com", response.data)
+        self.assertIn(b"Lookback window", response.data)
         self.assertIn(str(self.default_personal_config).encode("utf-8"), response.data)
 
     @mock.patch("news_agent.settings_app.Path.exists", return_value=True)
@@ -67,6 +68,7 @@ class SettingsAppTests(unittest.TestCase):
             data={
                 "topic": "climate technology",
                 "article_count": "4",
+                "lookback_hours": "48",
                 "subject_prefix": "Climate Digest",
                 "recipients": "a@example.com, b@example.com",
                 "frequency": "weekdays",
@@ -80,6 +82,7 @@ class SettingsAppTests(unittest.TestCase):
         config = write_config_mock.call_args.args[1]
         self.assertEqual(config.topic, "climate technology")
         self.assertEqual(config.article_count, 4)
+        self.assertEqual(config.lookback_hours, 48)
         self.assertEqual(config.email.recipients, ("a@example.com", "b@example.com"))
         self.assertEqual(config.schedule.frequency, "weekdays")
         self.assertEqual(config.schedule.time, "08:15")
@@ -162,6 +165,7 @@ class SettingsAppTests(unittest.TestCase):
             {"topic": "AI", "article_count": "0", "recipients": "recipient@example.com", "time": "09:00"},
             {"topic": "AI", "article_count": "3", "recipients": "not-an-email", "time": "09:00"},
             {"topic": "AI", "article_count": "3", "recipients": "recipient@example.com", "time": "25:99"},
+            {"topic": "AI", "article_count": "3", "lookback_hours": "0", "recipients": "recipient@example.com", "time": "09:00"},
         ]
         for case in cases:
             with self.subTest(case=case):

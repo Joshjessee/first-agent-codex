@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 import os
 from unittest import mock
@@ -12,6 +13,15 @@ from news_agent.config import AgentConfig
 from news_agent.config import GmailSourceConfig
 from news_agent.config import GoogleNewsSourceConfig
 from news_agent.config import SourcesConfig
+
+
+class _FixedDatetime(datetime):
+    @classmethod
+    def now(cls, tz: timezone | None = None) -> datetime:
+        fixed = datetime(2026, 6, 17, 12, 0, tzinfo=timezone.utc)
+        if tz is None:
+            return fixed.replace(tzinfo=None)
+        return fixed.astimezone(tz)
 
 
 class CollectorTests(unittest.TestCase):
@@ -62,6 +72,52 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(candidates[0].source, "Example News")
         self.assertEqual(candidates[1].source, "Newsletter: Example")
 
+    def test_collect_candidates_filters_dated_candidates_by_lookback_and_keeps_undated(self) -> None:
+        recent_candidate = ArticleCandidate(
+            index=1,
+            title="Recent headline",
+            source="Example News",
+            url="https://example.com/recent",
+            published_at=_FixedDatetime.now(timezone.utc) - timedelta(hours=2),
+            summary="Recent summary",
+        )
+        old_candidate = ArticleCandidate(
+            index=2,
+            title="Old headline",
+            source="Example News",
+            url="https://example.com/old",
+            published_at=_FixedDatetime.now(timezone.utc) - timedelta(hours=8),
+            summary="Old summary",
+        )
+        undated_candidate = ArticleCandidate(
+            index=3,
+            title="Undated headline",
+            source="Example News",
+            url="https://example.com/undated",
+            published_at=None,
+            summary="Undated summary",
+        )
+        config = AgentConfig(
+            topic="AI",
+            lookback_hours=6,
+            sources=SourcesConfig(
+                google_news=GoogleNewsSourceConfig(enabled=True),
+                gmail=GmailSourceConfig(enabled=False),
+            ),
+        )
+
+        with (
+            mock.patch("news_agent.collector.datetime", _FixedDatetime),
+            mock.patch(
+                "news_agent.collector._collect_google_news_candidates",
+                return_value=[recent_candidate, old_candidate, undated_candidate],
+            ),
+        ):
+            candidates = collect_candidates(config)
+
+        self.assertEqual([candidate.title for candidate in candidates], ["Recent headline", "Undated headline"])
+        self.assertEqual([candidate.index for candidate in candidates], [1, 2])
+
     @mock.patch.dict(
         os.environ,
         {
@@ -96,13 +152,15 @@ class CollectorTests(unittest.TestCase):
                     max_links_per_message=3,
                 )
             ),
+            lookback_hours=72,
         )
 
-        candidates = _collect_gmail_candidates(config)
+        with mock.patch("news_agent.collector.datetime", _FixedDatetime):
+            candidates = _collect_gmail_candidates(config)
 
         imap_ssl.assert_called_once_with("imap.gmail.com", 993)
         self.assertEqual(mailbox.selected_mailboxes, ["INBOX"])
-        self.assertIn(("SINCE", mock.ANY, "FROM", '"newsletter@example.com"'), mailbox.searches)
+        self.assertIn(("SINCE", "14-Jun-2026", "FROM", '"newsletter@example.com"'), mailbox.searches)
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].title, "Major AI lab ships a new model")
         self.assertEqual(candidates[0].source, "Newsletter: AI Briefing")

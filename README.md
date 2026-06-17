@@ -52,7 +52,7 @@ Start the local settings page:
 daily-research-agent-settings
 ```
 
-Open `http://127.0.0.1:8765`, then set the topic, number of articles, recipients, subject prefix, delivery time, and frequency. Use the personal config picker to open an existing personal config, or enter a name in **Save as new personal config** before saving.
+Open `http://127.0.0.1:8765`, then set the topic, number of articles, article lookback window, recipients, subject prefix, delivery time, and frequency. Use the personal config picker to open an existing personal config, or enter a name in **Save as new personal config** before saving.
 
 The settings page writes personal topic configs under `config/personal_topics/`. On first use, it loads `config/topics/ai.toml` only as a starter template, then saves to `config/personal_topics/default.toml` or the new personal file you name. API keys and SMTP passwords stay in `.env`.
 
@@ -63,6 +63,7 @@ Advanced users can also edit a personal config directly after creating it in the
 ```toml
 topic = "artificial intelligence"
 article_count = 3
+lookback_hours = 30
 
 [email]
 subject_prefix = "Daily Research Digest"

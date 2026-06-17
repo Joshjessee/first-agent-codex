@@ -48,6 +48,7 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.topic, "artificial intelligence")
         self.assertEqual(config.article_count, 3)
+        self.assertEqual(config.lookback_hours, 30)
         self.assertEqual(config.email.subject_prefix, "Daily Research Digest")
         self.assertEqual(config.email.recipients, ("recipient@example.com",))
         self.assertEqual(config.schedule.frequency, "daily")
@@ -62,9 +63,24 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.schedule.frequency, "daily")
         self.assertEqual(config.schedule.time, "09:00")
+        self.assertEqual(config.lookback_hours, 30)
         self.assertEqual(config.email.recipients, ())
         self.assertTrue(config.sources.google_news.enabled)
         self.assertFalse(config.sources.gmail.enabled)
+
+    def test_load_config_reads_lookback_hours(self) -> None:
+        path = _ReadablePath(
+            """
+            topic = "AI"
+            article_count = 4
+            lookback_hours = 72
+            """
+        )
+
+        config = load_config(path)
+
+        self.assertEqual(config.article_count, 4)
+        self.assertEqual(config.lookback_hours, 72)
 
     def test_load_config_reads_gmail_source_settings(self) -> None:
         path = _ReadablePath(
@@ -100,6 +116,7 @@ class ConfigTests(unittest.TestCase):
             AgentConfig(
                 topic="space",
                 article_count=5,
+                lookback_hours=72,
                 email=EmailConfig(
                     subject_prefix="Space Digest",
                     recipients=("a@example.com", "b@example.com"),
@@ -121,6 +138,7 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(config.topic, "space")
         self.assertEqual(config.article_count, 5)
+        self.assertEqual(config.lookback_hours, 72)
         self.assertEqual(config.email.subject_prefix, "Space Digest")
         self.assertEqual(config.email.recipients, ("a@example.com", "b@example.com"))
         self.assertEqual(config.schedule.frequency, "weekdays")

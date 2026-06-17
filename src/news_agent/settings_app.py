@@ -118,6 +118,15 @@ def _config_from_form(current: AgentConfig, form: object) -> _FormResult:
     if not 1 <= article_count <= 10:
         errors.append("Number of articles must be between 1 and 10.")
 
+    try:
+        lookback_hours = int(str(form.get("lookback_hours", str(current.lookback_hours))).strip())
+    except ValueError:
+        lookback_hours = current.lookback_hours
+        errors.append("Lookback window must be a whole number of hours.")
+
+    if not 1 <= lookback_hours <= 168:
+        errors.append("Lookback window must be between 1 and 168 hours.")
+
     invalid_recipients = [recipient for recipient in recipients if not _looks_like_email(recipient)]
     if not recipients:
         errors.append("At least one recipient email is required.")
@@ -136,6 +145,7 @@ def _config_from_form(current: AgentConfig, form: object) -> _FormResult:
         current,
         topic=topic,
         article_count=article_count,
+        lookback_hours=lookback_hours,
         email=EmailConfig(subject_prefix=subject_prefix, recipients=recipients),
         schedule=ScheduleConfig(frequency=frequency, time=time),
     )
@@ -248,51 +258,82 @@ SETTINGS_TEMPLATE = """
     <style>
       :root {
         color-scheme: light;
-        --bg: #f6f7f9;
-        --panel: #ffffff;
-        --text: #1f2937;
-        --muted: #5f6b7a;
-        --border: #d8dee8;
+        --bg: #eef5ff;
+        --panel: rgba(255, 255, 255, 0.94);
+        --text: #172033;
+        --muted: #64748b;
+        --border: #d7e3f4;
         --accent: #0f766e;
         --accent-dark: #115e59;
+        --accent-soft: #ccfbf1;
         --danger: #b42318;
+        --shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        background: var(--bg);
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(20, 184, 166, 0.24), transparent 34rem),
+          linear-gradient(135deg, #f8fbff 0%, var(--bg) 52%, #e7f8f5 100%);
         color: var(--text);
-        font-family: Arial, sans-serif;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         line-height: 1.5;
       }
       main {
-        width: min(920px, calc(100% - 32px));
-        margin: 32px auto;
+        width: min(1040px, calc(100% - 32px));
+        margin: 40px auto;
       }
       header {
-        display: flex;
-        align-items: flex-end;
-        justify-content: space-between;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
         gap: 20px;
         margin-bottom: 22px;
       }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: rgba(255,255,255,0.72);
+        padding: 6px 11px;
+        color: var(--accent-dark);
+        font-size: 13px;
+        font-weight: 800;
+      }
       h1 {
-        margin: 0 0 4px;
-        font-size: 28px;
-        line-height: 1.2;
+        margin: 0 0 8px;
+        font-size: clamp(32px, 5vw, 52px);
+        line-height: 1.02;
+        letter-spacing: -0.05em;
       }
       .subtle {
         margin: 0;
+        max-width: 620px;
         color: var(--muted);
-        font-size: 14px;
+        font-size: 16px;
       }
+      .summary-card {
+        align-self: end;
+        min-width: 220px;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        padding: 18px;
+      }
+      .summary-card strong { display: block; font-size: 22px; }
+      .summary-card span { color: var(--muted); font-size: 13px; }
       .status {
         border: 1px solid var(--border);
-        border-left: 4px solid var(--accent);
+        border-left: 5px solid var(--accent);
         background: #eefcf8;
-        border-radius: 6px;
-        padding: 12px 14px;
+        border-radius: 14px;
+        padding: 13px 16px;
         margin-bottom: 16px;
+        box-shadow: 0 12px 26px rgba(15, 118, 110, 0.08);
       }
       .errors {
         border-left-color: var(--danger);
@@ -301,14 +342,24 @@ SETTINGS_TEMPLATE = """
       form {
         background: var(--panel);
         border: 1px solid var(--border);
-        border-radius: 8px;
+        border-radius: 20px;
         padding: 24px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(12px);
       }
       .config-picker {
-        margin-bottom: 16px;
+        margin-bottom: 18px;
+        box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
       }
-      .config-picker .grid {
-        align-items: end;
+      .config-picker .grid { align-items: end; }
+      .section-title {
+        grid-column: 1 / -1;
+        margin: 6px 0 -4px;
+        color: var(--accent-dark);
+        font-size: 13px;
+        font-weight: 900;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
       .grid {
         display: grid;
@@ -318,58 +369,66 @@ SETTINGS_TEMPLATE = """
       label {
         display: block;
         margin-bottom: 7px;
-        font-weight: 700;
+        font-weight: 800;
         font-size: 14px;
       }
       input, select, textarea {
         width: 100%;
-        min-height: 42px;
+        min-height: 44px;
         border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 9px 11px;
+        border-radius: 12px;
+        padding: 10px 12px;
         color: var(--text);
         font: inherit;
         background: #ffffff;
+        transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
       }
-      textarea {
-        min-height: 92px;
-        resize: vertical;
+      input:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.14);
       }
+      textarea { min-height: 96px; resize: vertical; }
+      .hint { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
       .full { grid-column: 1 / -1; }
       .actions {
         display: flex;
         flex-wrap: wrap;
         gap: 12px;
-        margin-top: 22px;
+        margin-top: 24px;
       }
       button {
         border: 0;
-        border-radius: 6px;
-        padding: 10px 14px;
+        border-radius: 999px;
+        padding: 11px 17px;
         font: inherit;
-        font-weight: 700;
+        font-weight: 900;
         cursor: pointer;
+        transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
       }
+      button:hover { transform: translateY(-1px); }
       .primary {
-        background: var(--accent);
+        background: linear-gradient(135deg, var(--accent), #14b8a6);
         color: #ffffff;
+        box-shadow: 0 12px 24px rgba(15, 118, 110, 0.24);
       }
-      .primary:hover { background: var(--accent-dark); }
+      .primary:hover { background: linear-gradient(135deg, var(--accent-dark), var(--accent)); }
       .secondary {
         border: 1px solid var(--border);
         background: #ffffff;
         color: var(--text);
       }
       .path {
-        margin-top: 10px;
+        margin-top: 12px;
         color: var(--muted);
         font-size: 13px;
         overflow-wrap: anywhere;
       }
-      @media (max-width: 700px) {
-        header { display: block; }
+      @media (max-width: 760px) {
+        header { grid-template-columns: 1fr; }
+        .summary-card { min-width: 0; }
         .grid { grid-template-columns: 1fr; }
-        main { margin-top: 20px; }
+        main { margin-top: 24px; }
       }
     </style>
   </head>
@@ -377,8 +436,13 @@ SETTINGS_TEMPLATE = """
     <main>
       <header>
         <div>
+          <div class="eyebrow">✦ Local digest control center</div>
           <h1>Daily Research Agent Settings</h1>
-          <p class="subtle">Local settings for the scheduled email digest.</p>
+          <p class="subtle">Tune the topic, delivery schedule, recipients, and collection window for your scheduled email digest.</p>
+        </div>
+        <div class="summary-card" aria-label="Current digest summary">
+          <strong>{{ config.article_count }} articles</strong>
+          <span>from the last {{ config.lookback_hours }} hours</span>
         </div>
       </header>
 
@@ -404,9 +468,7 @@ SETTINGS_TEMPLATE = """
               {% endfor %}
             </select>
           </div>
-          <div>
-            <button class="secondary" type="submit">Open config</button>
-          </div>
+          <div><button class="secondary" type="submit">Open config</button></div>
         </div>
         <div class="path">Current file: {{ config_path }}</div>
       </form>
@@ -414,31 +476,33 @@ SETTINGS_TEMPLATE = """
       <form method="post">
         <input type="hidden" name="selected_config" value="{{ selected_config }}">
         <div class="grid">
+          <div class="section-title">Profile</div>
           <div class="full">
             <label for="new_config_name">Save as new personal config</label>
             <input id="new_config_name" name="new_config_name" placeholder="Leave blank to update {{ config_path.stem }}">
           </div>
-
           <div class="full">
             <label for="topic">Topic</label>
             <input id="topic" name="topic" value="{{ config.topic }}" required>
           </div>
 
+          <div class="section-title">Digest content</div>
           <div>
             <label for="article_count">Articles per email</label>
             <input id="article_count" name="article_count" type="number" min="1" max="10" value="{{ config.article_count }}" required>
+            <p class="hint">Choose 1–10 ranked stories.</p>
+          </div>
+          <div>
+            <label for="lookback_hours">Lookback window</label>
+            <input id="lookback_hours" name="lookback_hours" type="number" min="1" max="168" value="{{ config.lookback_hours }}" required>
+            <p class="hint">How many recent hours to scan, up to 7 days.</p>
           </div>
 
+          <div class="section-title">Email delivery</div>
           <div>
             <label for="subject_prefix">Subject prefix</label>
             <input id="subject_prefix" name="subject_prefix" value="{{ config.email.subject_prefix }}" required>
           </div>
-
-          <div class="full">
-            <label for="recipients">Recipients</label>
-            <textarea id="recipients" name="recipients" required>{{ recipients }}</textarea>
-          </div>
-
           <div>
             <label for="frequency">Frequency</label>
             <select id="frequency" name="frequency">
@@ -446,13 +510,16 @@ SETTINGS_TEMPLATE = """
               <option value="weekdays" {% if config.schedule.frequency == "weekdays" %}selected{% endif %}>Weekdays</option>
             </select>
           </div>
-
+          <div class="full">
+            <label for="recipients">Recipients</label>
+            <textarea id="recipients" name="recipients" required>{{ recipients }}</textarea>
+            <p class="hint">Separate multiple recipients with commas, semicolons, or new lines.</p>
+          </div>
           <div>
             <label for="time">Delivery time</label>
             <input id="time" name="time" type="time" value="{{ config.schedule.time }}" required>
           </div>
-
-          <div class="full">
+          <div>
             <label for="task_name">Windows task name</label>
             <input id="task_name" name="task_name" value="{{ task_name }}" required>
           </div>
