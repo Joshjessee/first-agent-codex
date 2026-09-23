@@ -50,6 +50,26 @@ class DigestTests(unittest.TestCase):
         self.assertIn("Example &lt;headline&gt;", html)
         self.assertIn("https://example.com/article?a=1&amp;b=2", html)
 
+    def test_digest_shows_overview_when_present(self) -> None:
+        digest = Digest(
+            topic="AI",
+            generated_at=datetime(2026, 5, 7, 9, 0, tzinfo=timezone.utc),
+            articles=[],
+            overview="Chips & models <dominated>.",
+        )
+
+        self.assertIn("The big picture: Chips & models <dominated>.", digest.to_text())
+        self.assertIn("Generated: 2026-05-07 09:00 UTC", digest.to_text())
+        html = digest.to_html()
+        self.assertIn("The big picture", html)
+        self.assertIn("Chips &amp; models &lt;dominated&gt;.", html)
+
+    def test_digest_omits_overview_section_when_empty(self) -> None:
+        digest = Digest(topic="AI", generated_at=datetime(2026, 5, 7, 9, 0, tzinfo=timezone.utc), articles=[])
+
+        self.assertNotIn("The big picture", digest.to_text())
+        self.assertNotIn("The big picture", digest.to_html())
+
 
 if __name__ == "__main__":
     unittest.main()

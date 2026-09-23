@@ -6,6 +6,7 @@ from email.utils import parseaddr
 from pathlib import Path
 import re
 import subprocess
+from urllib.parse import urlparse
 
 from flask import Flask
 from flask import request
@@ -14,6 +15,7 @@ from flask import render_template_string
 from news_agent.config import AgentConfig
 from news_agent.config import EmailConfig
 from news_agent.config import ScheduleConfig
+from news_agent.config import is_valid_timezone
 from news_agent.config import load_config
 from news_agent.config import write_config
 
@@ -141,19 +143,54 @@ def _config_from_form(current: AgentConfig, form: object) -> _FormResult:
         errors.append("Delivery time must be a valid time like 09:00 or 9:00 AM.")
         time = current.schedule.time
 
+    # Optional fields: when a form does not include them, keep the current values.
+    timezone = current.timezone
+    if form.get("timezone") is not None:
+        timezone = str(form.get("timezone", "")).strip()
+        if timezone and not is_valid_timezone(timezone):
+            errors.append(f"Unknown timezone: {timezone}. Use a name like America/Phoenix, or leave it blank.")
+            timezone = current.timezone
+
+    exclude_keywords = current.exclude_keywords
+    if form.get("exclude_keywords") is not None:
+        exclude_keywords = _parse_list(str(form.get("exclude_keywords", "")))
+
+    rss = current.sources.rss
+    if form.get("rss_feeds") is not None:
+        feeds = _parse_list(str(form.get("rss_feeds", "")), separators=("\n",))
+        invalid_feeds = [feed for feed in feeds if urlparse(feed).scheme not in {"http", "https"}]
+        if invalid_feeds:
+            errors.append(f"RSS feeds must start with http:// or https://: {invalid_feeds[0]}")
+        rss = replace(rss, enabled=bool(feeds), feeds=feeds)
+
+    history = current.history
+    history_values = form.getlist("history_enabled") if hasattr(form, "getlist") else []
+    if history_values:
+        history = replace(history, enabled=history_values[-1] == "1")
+
     config = replace(
         current,
         topic=topic,
         article_count=article_count,
         lookback_hours=lookback_hours,
+        timezone=timezone,
+        exclude_keywords=exclude_keywords,
         email=EmailConfig(subject_prefix=subject_prefix, recipients=recipients),
         schedule=ScheduleConfig(frequency=frequency, time=time),
+        sources=replace(current.sources, rss=rss),
+        history=history,
     )
     return _FormResult(config, errors)
 
 
 def _parse_recipients(value: str) -> tuple[str, ...]:
-    parts = value.replace(";", ",").replace("\n", ",").split(",")
+    return _parse_list(value)
+
+
+def _parse_list(value: str, *, separators: tuple[str, ...] = (";", "\n", ",")) -> tuple[str, ...]:
+    for separator in separators[1:]:
+        value = value.replace(separator, separators[0])
+    parts = value.split(separators[0])
     return tuple(part.strip() for part in parts if part.strip())
 
 
@@ -239,6 +276,8 @@ def _render_settings(
         scheduled=scheduled,
         errors=errors,
         recipients=", ".join(config.email.recipients),
+        exclude_keywords=", ".join(config.exclude_keywords),
+        rss_feeds="\n".join(config.sources.rss.feeds),
         task_name=DEFAULT_TASK_NAME,
     )
 
@@ -389,6 +428,8 @@ SETTINGS_TEMPLATE = """
         box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.14);
       }
       textarea { min-height: 96px; resize: vertical; }
+      .checkbox { display: flex; align-items: center; gap: 10px; min-height: 44px; font-weight: 600; }
+      .checkbox input { width: auto; min-height: 0; }
       .hint { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
       .full { grid-column: 1 / -1; }
       .actions {
@@ -498,6 +539,23 @@ SETTINGS_TEMPLATE = """
             <p class="hint">How many recent hours to scan, up to 7 days.</p>
           </div>
 
+          <div class="section-title">Sources &amp; filters</div>
+          <div class="full">
+            <label for="rss_feeds">Extra RSS feeds</label>
+            <textarea id="rss_feeds" name="rss_feeds" placeholder="https://example.com/feed.xml">{{ rss_feeds }}</textarea>
+            <p class="hint">Optional. One feed URL per line. These are ranked alongside Google News.</p>
+          </div>
+          <div>
+            <label for="exclude_keywords">Exclude keywords</label>
+            <input id="exclude_keywords" name="exclude_keywords" value="{{ exclude_keywords }}" placeholder="crypto, rumor">
+            <p class="hint">Skip articles that mention any of these words.</p>
+          </div>
+          <div>
+            <label>Avoid repeats</label>
+            <input type="hidden" name="history_enabled" value="0">
+            <label class="checkbox"><input id="history_enabled" name="history_enabled" type="checkbox" value="1" {% if config.history.enabled %}checked{% endif %}> Skip stories sent in the last {{ config.history.days }} days</label>
+          </div>
+
           <div class="section-title">Email delivery</div>
           <div>
             <label for="subject_prefix">Subject prefix</label>
@@ -518,6 +576,11 @@ SETTINGS_TEMPLATE = """
           <div>
             <label for="time">Delivery time</label>
             <input id="time" name="time" type="time" value="{{ config.schedule.time }}" required>
+          </div>
+          <div>
+            <label for="timezone">Timezone</label>
+            <input id="timezone" name="timezone" value="{{ config.timezone }}" placeholder="America/Phoenix">
+            <p class="hint">Optional. Used for the time shown in the email. Blank uses this computer's time.</p>
           </div>
           <div>
             <label for="task_name">Windows task name</label>

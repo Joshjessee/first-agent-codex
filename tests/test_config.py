@@ -5,6 +5,8 @@ import unittest
 from news_agent.config import AgentConfig
 from news_agent.config import EmailConfig
 from news_agent.config import GmailSourceConfig
+from news_agent.config import HistoryConfig
+from news_agent.config import RssSourceConfig
 from news_agent.config import ScheduleConfig
 from news_agent.config import SourcesConfig
 from news_agent.config import load_config
@@ -122,6 +124,9 @@ class ConfigTests(unittest.TestCase):
                     recipients=("a@example.com", "b@example.com"),
                 ),
                 schedule=ScheduleConfig(frequency="weekdays", time="08:30"),
+                timezone="America/Phoenix",
+                max_candidates=40,
+                exclude_keywords=("crypto",),
                 sources=SourcesConfig(
                     gmail=GmailSourceConfig(
                         enabled=True,
@@ -129,8 +134,10 @@ class ConfigTests(unittest.TestCase):
                         labels=("Newsletters",),
                         max_messages=8,
                         max_links_per_message=3,
-                    )
+                    ),
+                    rss=RssSourceConfig(enabled=True, feeds=("https://blog.example.com/feed",), max_items_per_feed=5),
                 ),
+                history=HistoryConfig(enabled=False, days=14),
             ),
         )
 
@@ -148,6 +155,44 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.sources.gmail.labels, ("Newsletters",))
         self.assertEqual(config.sources.gmail.max_messages, 8)
         self.assertEqual(config.sources.gmail.max_links_per_message, 3)
+        self.assertEqual(config.timezone, "America/Phoenix")
+        self.assertEqual(config.max_candidates, 40)
+        self.assertEqual(config.exclude_keywords, ("crypto",))
+        self.assertTrue(config.sources.rss.enabled)
+        self.assertEqual(config.sources.rss.feeds, ("https://blog.example.com/feed",))
+        self.assertEqual(config.sources.rss.max_items_per_feed, 5)
+        self.assertFalse(config.history.enabled)
+        self.assertEqual(config.history.days, 14)
+
+    def test_load_config_defaults_for_new_settings(self) -> None:
+        config = load_config(_ReadablePath('topic = "AI"\n'))
+
+        self.assertEqual(config.timezone, "")
+        self.assertEqual(config.max_candidates, 25)
+        self.assertEqual(config.exclude_keywords, ())
+        self.assertFalse(config.sources.rss.enabled)
+        self.assertTrue(config.history.enabled)
+        self.assertEqual(config.history.days, 7)
+
+    def test_load_config_clamps_out_of_range_numbers(self) -> None:
+        config = load_config(
+            _ReadablePath(
+                """
+                topic = "AI"
+                article_count = 50
+                lookback_hours = 0
+                max_candidates = "lots"
+                """
+            )
+        )
+
+        self.assertEqual(config.article_count, 10)
+        self.assertEqual(config.lookback_hours, 1)
+        self.assertEqual(config.max_candidates, 25)
+
+    def test_load_config_rejects_unknown_timezone(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown timezone"):
+            load_config(_ReadablePath('topic = "AI"\ntimezone = "Mars/Olympus"\n'))
 
 
 if __name__ == "__main__":
