@@ -8,3 +8,8 @@ src/*.egg-info/
 # Personal topic configs can contain recipient addresses and source choices.
 config/personal_topics/*.toml
 .test-personal-topics/
+
+# Remembers which articles were already emailed (see [history] in the config).
+.agent-state/
+# HTML previews written with --preview-html.
+*.preview.html

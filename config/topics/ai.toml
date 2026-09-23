@@ -7,6 +7,16 @@ lookback_hours = 30
 language = "en-US"
 region = "US"
 
+# Optional: timezone for the time shown in the email, e.g. "America/Phoenix".
+# Leave blank to use the computer's local time.
+timezone = ""
+
+# How many collected articles OpenAI chooses from (5-100).
+max_candidates = 25
+
+# Skip articles whose title or snippet mentions any of these words.
+exclude_keywords = []
+
 [email]
 subject_prefix = "Daily Research Digest"
 recipients = ["recipient@example.com"]
@@ -28,3 +38,14 @@ senders = []
 labels = []
 max_messages = 25
 max_links_per_message = 6
+
+# Optional: add any RSS or Atom feeds (blogs, publications, arXiv, etc.).
+[sources.rss]
+enabled = false
+feeds = []
+max_items_per_feed = 10
+
+# Remember which articles were emailed so later digests do not repeat them.
+[history]
+enabled = true
+days = 7

@@ -1,6 +1,6 @@
 [project]
 name = "daily-research-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "A shareable topic-based daily news digest agent powered by OpenAI."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -10,6 +10,13 @@ dependencies = [
     "openai>=1.99.0",
     "python-dotenv>=1.0.1",
     "tomli-w>=1.0.0",
+    # Windows has no built-in timezone database, which the `timezone` setting needs.
+    "tzdata; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
 ]
 
 [project.scripts]

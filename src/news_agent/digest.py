@@ -19,6 +19,7 @@ class Digest:
     topic: str
     generated_at: datetime
     articles: list[DigestArticle]
+    overview: str = ""
 
     def subject(self, prefix: str) -> str:
         date_text = self.generated_at.strftime("%b %d, %Y")
@@ -27,9 +28,11 @@ class Digest:
     def to_text(self) -> str:
         lines = [
             f"Daily Research Digest: {self.topic}",
-            f"Generated: {self.generated_at.strftime('%Y-%m-%d %H:%M')}",
+            f"Generated: {self.generated_at.strftime('%Y-%m-%d %H:%M')} {self._timezone_label()}".rstrip(),
             "",
         ]
+        if self.overview:
+            lines.extend([f"The big picture: {self.overview}", ""])
 
         for index, article in enumerate(self.articles, start=1):
             lines.extend(
@@ -86,8 +89,25 @@ class Digest:
             """
             for index, article in enumerate(self.articles, start=1)
         )
-        generated = self.generated_at.strftime("%A, %B %d, %Y at %I:%M %p")
+        generated = f"{self.generated_at.strftime('%A, %B %d, %Y at %I:%M %p')} {self._timezone_label()}".rstrip()
         topic = escape(self.topic)
+        overview_row = (
+            f"""
+                    <tr>
+                      <td style="padding: 20px 0 0 0;">
+                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse: collapse; background: #ffffff; border: 1px solid #d9e2ec; border-left: 4px solid #0f766e; border-radius: 8px;">
+                          <tr>
+                            <td style="padding: 16px 20px;">
+                              <div style="font-family: Arial, sans-serif; font-size: 12px; line-height: 16px; color: #0f766e; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;">The big picture</div>
+                              <div style="margin-top: 6px; font-family: Arial, sans-serif; font-size: 15px; line-height: 23px; color: #243b53;">{escape(self.overview)}</div>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>"""
+            if self.overview
+            else ""
+        )
         return f"""
         <!doctype html>
         <html lang="en">
@@ -110,7 +130,7 @@ class Digest:
                         <h1 style="margin: 8px 0 8px 0; font-family: Arial, sans-serif; font-size: 30px; line-height: 36px; color: #ffffff;">{topic}</h1>
                         <div style="font-family: Arial, sans-serif; font-size: 14px; line-height: 21px; color: #bcccdc;">Generated {generated}</div>
                       </td>
-                    </tr>
+                    </tr>{overview_row}
                     <tr>
                       <td style="padding: 20px 0 0 0;">
                         <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse: collapse;">
@@ -130,3 +150,6 @@ class Digest:
           </body>
         </html>
         """
+
+    def _timezone_label(self) -> str:
+        return self.generated_at.tzname() or ""

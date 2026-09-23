@@ -180,6 +180,80 @@ class SettingsAppTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 400)
         write_config_mock.assert_not_called()
 
+    @mock.patch("news_agent.settings_app.write_config")
+    @mock.patch("news_agent.settings_app.load_config")
+    def test_save_writes_sources_and_filters(
+        self,
+        load_config_mock: mock.Mock,
+        write_config_mock: mock.Mock,
+    ) -> None:
+        load_config_mock.return_value = self.current_config
+
+        response = self.client.post(
+            "/save",
+            data={
+                "topic": "AI",
+                "article_count": "3",
+                "subject_prefix": "Daily Research Digest",
+                "recipients": "recipient@example.com",
+                "frequency": "daily",
+                "time": "09:00",
+                "timezone": "America/Phoenix",
+                "exclude_keywords": "crypto, rumor",
+                "rss_feeds": "https://blog.example.com/feed\nhttps://news.example.com/rss.xml",
+                "history_enabled": ["0"],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        config = write_config_mock.call_args.args[1]
+        self.assertEqual(config.timezone, "America/Phoenix")
+        self.assertEqual(config.exclude_keywords, ("crypto", "rumor"))
+        self.assertTrue(config.sources.rss.enabled)
+        self.assertEqual(
+            config.sources.rss.feeds,
+            ("https://blog.example.com/feed", "https://news.example.com/rss.xml"),
+        )
+        self.assertFalse(config.history.enabled)
+
+    @mock.patch("news_agent.settings_app.write_config")
+    @mock.patch("news_agent.settings_app.load_config")
+    def test_checked_history_box_enables_history(
+        self,
+        load_config_mock: mock.Mock,
+        write_config_mock: mock.Mock,
+    ) -> None:
+        load_config_mock.return_value = self.current_config
+
+        self.client.post(
+            "/save",
+            data={
+                "topic": "AI",
+                "article_count": "3",
+                "recipients": "recipient@example.com",
+                "time": "09:00",
+                "history_enabled": ["0", "1"],
+            },
+        )
+
+        self.assertTrue(write_config_mock.call_args.args[1].history.enabled)
+
+    @mock.patch("news_agent.settings_app.write_config")
+    @mock.patch("news_agent.settings_app.load_config")
+    def test_invalid_sources_and_filters_return_validation_error(
+        self,
+        load_config_mock: mock.Mock,
+        write_config_mock: mock.Mock,
+    ) -> None:
+        load_config_mock.return_value = self.current_config
+        base = {"topic": "AI", "article_count": "3", "recipients": "recipient@example.com", "time": "09:00"}
+        for extra in ({"timezone": "Mars/Olympus"}, {"rss_feeds": "ftp://example.com/feed"}):
+            with self.subTest(extra=extra):
+                response = self.client.post("/save", data={**base, **extra})
+
+                self.assertEqual(response.status_code, 400)
+        write_config_mock.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

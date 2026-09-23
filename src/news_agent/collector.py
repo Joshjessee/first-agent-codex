@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from email import policy
 from email.message import Message
@@ -9,8 +10,13 @@ from email.utils import parsedate_to_datetime
 from email.utils import parseaddr
 from html.parser import HTMLParser
 import imaplib
+from itertools import zip_longest
+import logging
+import math
 import os
 import re
+import ssl
+from typing import Callable
 from typing import Iterable
 from urllib.parse import parse_qs
 from urllib.parse import quote_plus
@@ -19,10 +25,18 @@ from urllib.parse import urldefrag
 from urllib.parse import urlencode
 from urllib.parse import urlparse
 from urllib.parse import urlunparse
+from urllib.request import Request
+from urllib.request import urlopen
 
 import feedparser
 
 from news_agent.config import AgentConfig
+
+
+logger = logging.getLogger(__name__)
+
+FEED_TIMEOUT_SECONDS = 20
+USER_AGENT = "Mozilla/5.0 (compatible; daily-research-agent/0.2)"
 
 
 @dataclass(frozen=True)
@@ -35,25 +49,116 @@ class ArticleCandidate:
     summary: str
 
 
-def collect_candidates(config: AgentConfig, limit: int = 25) -> list[ArticleCandidate]:
-    candidates: list[ArticleCandidate] = []
-    if config.sources.google_news.enabled:
-        candidates.extend(_collect_google_news_candidates(config))
-    if config.sources.gmail.enabled:
-        candidates.extend(_collect_gmail_candidates(config))
+class NoSourcesAvailableError(RuntimeError):
+    """Raised when every enabled source failed or no source is enabled."""
 
-    recent = _filter_recent(candidates, config.lookback_hours)
-    return _dedupe(recent)[:limit]
+
+def collect_candidates(
+    config: AgentConfig,
+    limit: int | None = None,
+    *,
+    skip: Callable[[ArticleCandidate], bool] | None = None,
+) -> list[ArticleCandidate]:
+    """Gather, filter, and dedupe article candidates from every enabled source.
+
+    Each source is collected independently, so one broken source (for example a
+    Gmail login failure) only logs a warning instead of stopping the whole run.
+    Candidates are interleaved across sources so a large source like Google News
+    cannot crowd smaller ones out of the final candidate list.
+    """
+    limit = config.max_candidates if limit is None else limit
+    groups, errors = _collect_source_groups(config)
+    if not groups:
+        if errors:
+            raise NoSourcesAvailableError("Every enabled source failed: " + "; ".join(errors))
+        raise NoSourcesAvailableError("No article sources are enabled in the config.")
+
+    exclude_pattern = _exclude_pattern(config.exclude_keywords)
+    filtered_groups = []
+    for group in groups:
+        group = _filter_recent(group, config.lookback_hours)
+        if exclude_pattern is not None:
+            group = [candidate for candidate in group if not _is_excluded(candidate, exclude_pattern)]
+        if skip is not None:
+            group = [candidate for candidate in group if not skip(candidate)]
+        filtered_groups.append(group)
+
+    return _dedupe(_interleave(filtered_groups))[:limit]
+
+
+def _collect_source_groups(config: AgentConfig) -> tuple[list[list[ArticleCandidate]], list[str]]:
+    groups: list[list[ArticleCandidate]] = []
+    errors: list[str] = []
+
+    def run_source(name: str, collect: Callable[[], list[list[ArticleCandidate]]]) -> None:
+        try:
+            source_groups = collect()
+        except Exception as error:  # noqa: BLE001 - one bad source must not stop the others.
+            logger.warning("Skipping %s source: %s", name, error)
+            errors.append(f"{name}: {error}")
+            return
+        count = sum(len(group) for group in source_groups)
+        logger.info("Collected %d candidates from %s.", count, name)
+        groups.extend(source_groups)
+
+    if config.sources.google_news.enabled:
+        run_source("Google News", lambda: [_collect_google_news_candidates(config)])
+    if config.sources.rss.enabled:
+        run_source("RSS feeds", lambda: _collect_rss_candidates(config))
+    if config.sources.gmail.enabled:
+        run_source("Gmail", lambda: [_collect_gmail_candidates(config)])
+    return groups, errors
 
 
 def _collect_google_news_candidates(config: AgentConfig) -> list[ArticleCandidate]:
-    query = quote_plus(f"{config.topic} when:1d")
-    feed_url = (
+    feed = _fetch_feed(google_news_feed_url(config))
+    return _normalize_entries(feed.entries, strip_source_suffix=True)
+
+
+def google_news_feed_url(config: AgentConfig) -> str:
+    # Google News only understands whole days in the `when:` operator, so round
+    # up and let _filter_recent apply the exact hour cutoff afterwards.
+    days = max(1, math.ceil(config.lookback_hours / 24))
+    query = quote_plus(f"{config.topic} when:{days}d")
+    language_code = config.language.split("-", 1)[0] or "en"
+    return (
         "https://news.google.com/rss/search"
-        f"?q={query}&hl={config.language}&gl={config.region}&ceid={config.region}:en"
+        f"?q={query}&hl={config.language}&gl={config.region}&ceid={config.region}:{language_code}"
     )
-    feed = feedparser.parse(feed_url)
-    return _normalize_entries(feed.entries)
+
+
+def _collect_rss_candidates(config: AgentConfig) -> list[list[ArticleCandidate]]:
+    rss_config = config.sources.rss
+    if not rss_config.feeds:
+        raise RuntimeError("RSS source is enabled, but no feeds are listed in sources.rss.feeds.")
+
+    groups: list[list[ArticleCandidate]] = []
+    errors: list[str] = []
+    for feed_url in rss_config.feeds:
+        try:
+            feed = _fetch_feed(feed_url)
+        except Exception as error:  # noqa: BLE001 - keep going with the other feeds.
+            logger.warning("Skipping RSS feed %s: %s", feed_url, error)
+            errors.append(f"{feed_url}: {error}")
+            continue
+        feed_title = _clean_text(getattr(getattr(feed, "feed", None), "title", "") or "")
+        entries = list(feed.entries)[: rss_config.max_items_per_feed]
+        groups.append(_normalize_entries(entries, default_source=feed_title or urlparse(feed_url).netloc))
+
+    if not groups:
+        raise RuntimeError("Every RSS feed failed: " + "; ".join(errors))
+    return groups
+
+
+def _fetch_feed(url: str) -> feedparser.FeedParserDict:
+    """Download a feed with a timeout so a slow server cannot hang the agent."""
+    request = Request(url, headers={"User-Agent": USER_AGENT})
+    with urlopen(request, timeout=FEED_TIMEOUT_SECONDS) as response:
+        data = response.read()
+    feed = feedparser.parse(data)
+    if feed.get("bozo") and not feed.entries:
+        raise RuntimeError(f"Could not parse feed {url}: {feed.get('bozo_exception')}")
+    return feed
 
 
 def _collect_gmail_candidates(config: AgentConfig) -> list[ArticleCandidate]:
@@ -72,7 +177,8 @@ def _collect_gmail_candidates(config: AgentConfig) -> list[ArticleCandidate]:
     since = datetime.now(timezone.utc) - timedelta(hours=config.lookback_hours)
 
     messages: list[Message] = []
-    with imaplib.IMAP4_SSL(host, port) as mailbox:
+    # An explicit default context makes Python verify the server certificate.
+    with imaplib.IMAP4_SSL(host, port, ssl_context=ssl.create_default_context(), timeout=FEED_TIMEOUT_SECONDS) as mailbox:
         mailbox.login(username, password)
         for mail_label in mailboxes:
             if len(messages) >= gmail_config.max_messages:
@@ -181,14 +287,25 @@ def _extract_newsletter_candidates_from_message(
     return candidates
 
 
-def _normalize_entries(entries: Iterable[object]) -> list[ArticleCandidate]:
+def _normalize_entries(
+    entries: Iterable[object],
+    *,
+    default_source: str = "Unknown source",
+    strip_source_suffix: bool = False,
+) -> list[ArticleCandidate]:
     candidates: list[ArticleCandidate] = []
     for entry in entries:
-        title = _clean_text(getattr(entry, "title", ""))
+        title = _clean_text(_strip_html(getattr(entry, "title", "")))
         url = _clean_url(str(getattr(entry, "link", "")).strip())
-        summary = _clean_text(getattr(entry, "summary", ""))
-        source = _source_name(entry)
+        source = _source_name(entry, default=default_source)
+        summary = _clean_text(_strip_html(getattr(entry, "summary", "")))
         published_at = _published_at(entry)
+
+        if strip_source_suffix:
+            title = _strip_source_suffix(title, source)
+        if summary.lower().startswith(title.lower()):
+            # Google News snippets just repeat the headline and source name.
+            summary = ""
 
         if not title or not url:
             continue
@@ -204,6 +321,48 @@ def _normalize_entries(entries: Iterable[object]) -> list[ArticleCandidate]:
             )
         )
     return candidates
+
+
+def _strip_source_suffix(title: str, source: str) -> str:
+    """Turn Google News titles like "Big news - Example Times" into "Big news"."""
+    suffix = f" - {source}"
+    if source and title.endswith(suffix) and len(title) > len(suffix):
+        return title[: -len(suffix)].strip()
+    return title
+
+
+class _TextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+
+def _strip_html(value: object) -> str:
+    text = str(value or "")
+    if "<" not in text and "&" not in text:
+        return text
+    extractor = _TextExtractor()
+    extractor.feed(text)
+    extractor.close()
+    return " ".join(extractor.parts)
+
+
+def _exclude_pattern(keywords: tuple[str, ...]) -> re.Pattern[str] | None:
+    if not keywords:
+        return None
+    alternatives = "|".join(re.escape(keyword) for keyword in keywords)
+    return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
+
+
+def _is_excluded(candidate: ArticleCandidate, pattern: re.Pattern[str]) -> bool:
+    return bool(pattern.search(f"{candidate.title} {candidate.summary} {candidate.source}"))
+
+
+def _interleave(groups: list[list[ArticleCandidate]]) -> list[ArticleCandidate]:
+    return [candidate for round_ in zip_longest(*groups) for candidate in round_ if candidate is not None]
 
 
 def _newsletter_sender(message: Message) -> str:
@@ -374,14 +533,24 @@ def _is_low_value_link(title: str, url: str) -> bool:
     return any(term in text for term in low_value_terms)
 
 
-def _source_name(entry: object) -> str:
+def _source_name(entry: object, *, default: str = "Unknown source") -> str:
     source = getattr(entry, "source", None)
     if source and getattr(source, "title", None):
         return str(source.title).strip()
-    return "Unknown source"
+    return default
 
 
 def _published_at(entry: object) -> datetime | None:
+    # feedparser pre-parses both RSS (RFC 822) and Atom (ISO 8601) dates into
+    # UTC struct_time values, which is more reliable than parsing strings.
+    for attribute in ("published_parsed", "updated_parsed"):
+        parsed_time = getattr(entry, attribute, None)
+        if parsed_time:
+            try:
+                return datetime(*parsed_time[:6], tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                continue
+
     published = getattr(entry, "published", None)
     if not published:
         return None
@@ -408,28 +577,24 @@ def _dedupe(candidates: list[ArticleCandidate]) -> list[ArticleCandidate]:
     seen_urls: set[str] = set()
     deduped: list[ArticleCandidate] = []
     for candidate in candidates:
-        title_key = candidate.title.lower().strip()
-        url_key = _dedupe_url_key(candidate.url)
+        title_key = title_key_for(candidate.title)
+        url_key = url_key_for(candidate.url)
         if title_key in seen_titles or (url_key and url_key in seen_urls):
             continue
         seen_titles.add(title_key)
         if url_key:
             seen_urls.add(url_key)
         deduped.append(candidate)
-    return [
-        ArticleCandidate(
-            index=index,
-            title=candidate.title,
-            source=candidate.source,
-            url=candidate.url,
-            published_at=candidate.published_at,
-            summary=candidate.summary,
-        )
-        for index, candidate in enumerate(deduped, start=1)
-    ]
+    return [replace(candidate, index=index) for index, candidate in enumerate(deduped, start=1)]
 
 
-def _dedupe_url_key(url: str) -> str:
+def title_key_for(title: str) -> str:
+    """A normalized headline used to spot the same story from different links."""
+    return " ".join(re.sub(r"[^\w\s]", " ", title.lower()).split())
+
+
+def url_key_for(url: str) -> str:
+    """A normalized URL used to spot the same article behind tracking links."""
     clean_url = _clean_url(url)
     if not clean_url:
         return ""
