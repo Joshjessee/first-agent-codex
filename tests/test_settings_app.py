@@ -89,6 +89,49 @@ class SettingsAppTests(unittest.TestCase):
 
     @mock.patch("news_agent.settings_app.write_config")
     @mock.patch("news_agent.settings_app.load_config")
+    def test_same_page_form_post_is_allowed(
+        self,
+        load_config_mock: mock.Mock,
+        write_config_mock: mock.Mock,
+    ) -> None:
+        load_config_mock.return_value = self.current_config
+
+        response = self.client.post(
+            "/save",
+            base_url="http://127.0.0.1:8765",
+            headers={"Origin": "http://127.0.0.1:8765"},
+            data={"topic": "robots", "recipients": "a@example.com", "time": "09:00"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        write_config_mock.assert_called_once()
+
+    @mock.patch("news_agent.settings_app.write_config")
+    def test_post_from_another_website_is_rejected(self, write_config_mock: mock.Mock) -> None:
+        for origin in ("https://evil.example", "null", "http://127.0.0.1:9999"):
+            with self.subTest(origin=origin):
+                response = self.client.post(
+                    "/save",
+                    base_url="http://127.0.0.1:8765",
+                    headers={"Origin": origin},
+                    data={"topic": "robots", "recipients": "attacker@example.com", "time": "09:00"},
+                )
+
+                self.assertEqual(response.status_code, 403)
+        write_config_mock.assert_not_called()
+
+    @mock.patch("news_agent.settings_app.subprocess.run")
+    def test_unknown_host_is_rejected(self, run_mock: mock.Mock) -> None:
+        # A DNS-rebinding page reaches the app under the attacker's own hostname.
+        response = self.client.get("/", base_url="http://evil.example:8765")
+        self.assertEqual(response.status_code, 403)
+
+        response = self.client.post("/apply-schedule", base_url="http://evil.example:8765", data={})
+        self.assertEqual(response.status_code, 403)
+        run_mock.assert_not_called()
+
+    @mock.patch("news_agent.settings_app.write_config")
+    @mock.patch("news_agent.settings_app.load_config")
     def test_save_as_new_config_writes_personal_file(
         self,
         load_config_mock: mock.Mock,

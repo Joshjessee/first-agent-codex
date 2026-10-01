@@ -20,6 +20,14 @@ class GitHubWorkflowTests(unittest.TestCase):
         self.assertIn("path: .agent-state", workflow)
         self.assertIn("restore-keys", workflow)
 
+    def test_daily_digest_workflow_does_not_paste_inputs_into_shell(self) -> None:
+        workflow = Path(".github/workflows/daily-digest.yml").read_text(encoding="utf-8")
+        run_blocks = workflow.split("run: ")[1:]
+
+        self.assertIn("DRY_RUN: ${{ inputs.dry_run }}", workflow)
+        for block in run_blocks:
+            self.assertNotIn("${{ inputs.", block.split("\n      - name:")[0])
+
     def test_daily_digest_workflow_keeps_schedule_enabled(self) -> None:
         workflow = Path(".github/workflows/daily-digest.yml").read_text(encoding="utf-8")
 

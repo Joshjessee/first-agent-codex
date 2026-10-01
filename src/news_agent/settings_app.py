@@ -9,6 +9,7 @@ import subprocess
 from urllib.parse import urlparse
 
 from flask import Flask
+from flask import abort
 from flask import request
 from flask import render_template_string
 
@@ -25,6 +26,7 @@ SAMPLE_CONFIG_PATH = PROJECT_ROOT / "config" / "topics" / "ai.toml"
 PERSONAL_CONFIG_DIR = PROJECT_ROOT / "config" / "personal_topics"
 DEFAULT_CONFIG_PATH = PERSONAL_CONFIG_DIR / "default.toml"
 DEFAULT_TASK_NAME = "Daily Research Agent"
+LOCAL_HOSTNAMES = {"127.0.0.1", "localhost"}
 
 
 def create_app(
@@ -35,6 +37,17 @@ def create_app(
     app = Flask(__name__)
     app.config["PERSONAL_CONFIG_DIR"] = Path(personal_config_dir)
     app.config["TOPIC_CONFIG_PATH"] = Path(config_path) if config_path is not None else _default_personal_config_path(app)
+
+    @app.before_request
+    def only_allow_this_computer() -> None:
+        # Another website open in the same browser must not be able to change
+        # recipients or the Windows task. Checking Host blocks DNS-rebinding
+        # tricks, and checking Origin blocks cross-site form posts.
+        if _hostname(request.host) not in LOCAL_HOSTNAMES:
+            abort(403)
+        origin = request.headers.get("Origin")
+        if request.method == "POST" and origin is not None and _hostname_and_port(origin) != request.host:
+            abort(403)
 
     @app.get("/")
     def index() -> str:
@@ -207,6 +220,14 @@ def _normalize_time(value: str) -> str | None:
         except ValueError:
             continue
     return None
+
+
+def _hostname(host: str) -> str:
+    return (urlparse(f"//{host}").hostname or "").lower()
+
+
+def _hostname_and_port(origin: str) -> str:
+    return urlparse(origin).netloc.lower()
 
 
 def _default_personal_config_path(app: Flask) -> Path:
