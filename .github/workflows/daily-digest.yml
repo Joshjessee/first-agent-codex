@@ -81,9 +81,13 @@ jobs:
           GMAIL_PASSWORD: ${{ secrets.GMAIL_PASSWORD }}
           GMAIL_IMAP_HOST: ${{ secrets.GMAIL_IMAP_HOST }}
           GMAIL_IMAP_PORT: ${{ secrets.GMAIL_IMAP_PORT }}
+          # Passed through env instead of pasted into the script, so a run input
+          # can never be read as shell code.
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           args=(python -m news_agent --config "$TOPIC_CONFIG")
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$DRY_RUN" = "true" ]; then
             args+=(--dry-run)
           fi
           "${args[@]}"
@@ -96,4 +100,4 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh api --method PUT "repos/${{ github.repository }}/actions/workflows/daily-digest.yml/enable"
+        run: gh api --method PUT "repos/$GITHUB_REPOSITORY/actions/workflows/daily-digest.yml/enable"
