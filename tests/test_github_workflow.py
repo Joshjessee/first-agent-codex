@@ -20,6 +20,12 @@ class GitHubWorkflowTests(unittest.TestCase):
         self.assertIn("path: .agent-state", workflow)
         self.assertIn("restore-keys", workflow)
 
+    def test_daily_digest_workflow_keeps_schedule_enabled(self) -> None:
+        workflow = Path(".github/workflows/daily-digest.yml").read_text(encoding="utf-8")
+
+        self.assertIn("actions: write", workflow)
+        self.assertIn("actions/workflows/daily-digest.yml/enable", workflow)
+
     def test_tests_workflow_runs_pytest(self) -> None:
         workflow = Path(".github/workflows/tests.yml").read_text(encoding="utf-8")
 

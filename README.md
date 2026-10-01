@@ -181,6 +181,15 @@ Optional secrets:
 - `EMAIL_TO`: fallback recipients when the TOML config does not include `[email].recipients`.
 - `GMAIL_USERNAME`, `GMAIL_PASSWORD`, `GMAIL_IMAP_HOST`, `GMAIL_IMAP_PORT`: only needed when the Gmail source is enabled.
 
+When you start it manually, leave **Print the digest instead of sending email**
+set to `false` if you want a real email. Choosing `true` is a dry run: the digest
+only appears in the workflow log.
+
+GitHub automatically turns off scheduled workflows in public repositories after
+60 days without a commit. The workflow re-enables itself on every run to prevent
+that. If the schedule ever stops anyway, open the Actions tab, pick
+**Daily Research Digest**, and click **Enable workflow**.
+
 The workflow writes `TOPIC_CONFIG_TOML` to `config/personal_topics/github.toml` at runtime. If that secret is not set, it will use a committed `config/personal_topics/default.toml`; otherwise it fails. It does not fall back to the shared sample config.
 
 The workflow keeps the "already sent" memory between runs with the GitHub Actions
