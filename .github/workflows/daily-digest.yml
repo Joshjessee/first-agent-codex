@@ -1,9 +1,11 @@
 name: Daily Research Digest
 
 on:
-  schedule:
-    # GitHub cron uses UTC. 16:00 UTC is 9:00 AM in America/Phoenix.
-    - cron: "0 16 * * *"
+  # DISCONTINUED: the daily schedule is turned off. To resume, uncomment the
+  # lines below. The workflow can still be started by hand (workflow_dispatch).
+  # schedule:
+  #   # GitHub cron uses UTC. 16:00 UTC is 9:00 AM in America/Phoenix.
+  #   - cron: "0 16 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
